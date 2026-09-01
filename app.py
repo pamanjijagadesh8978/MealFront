@@ -23,8 +23,8 @@ st.set_page_config(page_title="Nutrition & Fitness Profile Builder", page_icon="
 # ---------------------------------------------------------------------------
 # Meal Generation API config
 # ---------------------------------------------------------------------------
-DEFAULT_API_BASE_URL = "http://localhost:8000"
-# DEFAULT_API_BASE_URL = "https://mealback-recommendation-api-523501105526.asia-south1.run.app"
+# DEFAULT_API_BASE_URL = "http://localhost:8000"
+DEFAULT_API_BASE_URL = "https://mealback-recommendation-api-523501105526.asia-south1.run.app"
 REQUEST_TIMEOUT_S = 600
 
 with st.sidebar:
