@@ -23,8 +23,8 @@ st.set_page_config(page_title="Nutrition & Fitness Profile Builder", page_icon="
 # ---------------------------------------------------------------------------
 # Meal Generation API config
 # ---------------------------------------------------------------------------
-# DEFAULT_API_BASE_URL = "http://localhost:8000"
-DEFAULT_API_BASE_URL = "https://mealback-recommendation-api-523501105526.asia-south1.run.app"
+DEFAULT_API_BASE_URL = "http://localhost:8000"
+# DEFAULT_API_BASE_URL = "https://mealback-recommendation-api-523501105526.asia-south1.run.app"
 REQUEST_TIMEOUT_S = 600
 
 with st.sidebar:
@@ -129,7 +129,24 @@ def bmi_weight_condition(height_cm, weight_kg):
     return bmi, condition
 
 
-def build_export_json(profile, sodium_mg):
+def build_cuisine_eating_patterns(preferred_cuisines, custom_eating_pattern=""):
+    """Build the cuisine_eating_patterns dict sent to the API.
+
+    Starts from the built-in CUISINE_EATING_PATTERNS (goals.py). If the user
+    described their own usual eating habits in the free-text box, that
+    description overrides the built-in pattern for every one of their
+    preferred cuisines (the API matches guidance per preferred cuisine name,
+    so the same user-provided text is applied under each selected cuisine).
+    """
+    custom_eating_pattern = (custom_eating_pattern or "").strip()
+    patterns = dict(CUISINE_EATING_PATTERNS)
+    if custom_eating_pattern:
+        for cuisine in preferred_cuisines:
+            patterns[cuisine] = custom_eating_pattern
+    return patterns
+
+
+def build_export_json(profile, sodium_mg, custom_eating_pattern=""):
     """Reshapes the computed profile dict into the flat export schema."""
     macros = profile["macros"]
     protein, carbs, fats = macros["Protein"], macros["Carbohydrates"], macros["Fats"]
@@ -159,6 +176,17 @@ def build_export_json(profile, sodium_mg):
         "diseases": profile["diseases"],
         "dietary_preferences": profile["dietary_preferences"],
         "preferred_cuisines": profile["preferred_cuisines"],
+        # Sent through explicitly so the backend (RedMeal.py) always builds
+        # meal-plan prompts from the exact same eating-pattern definitions
+        # this frontend shows/uses, even if goals.py on the API side drifts
+        # out of sync. The API falls back to its own goals.py copy of
+        # CUISINE_EATING_PATTERNS if this is omitted or empty. If the user
+        # described their own eating habits above, that description is used
+        # here instead of the built-in pattern - see
+        # build_cuisine_eating_patterns().
+        "cuisine_eating_patterns": build_cuisine_eating_patterns(
+            profile["preferred_cuisines"], custom_eating_pattern
+        ),
         "foods_aggravating_digestive_issues": profile["foods_aggravating_digestive_issues"],
         "goal": [profile["goal"]],
         "restricted_foods": profile.get("restricted_foods", []),
@@ -248,6 +276,21 @@ with col5:
     dietary_preferences = st.multiselect("Dietary preferences", options=DIETARY_PREFERENCE_OPTIONS, default=["Vegetarian"])
     preferred_cuisines = st.multiselect("Preferred cuisines", options=CUISINE_OPTIONS, default=["North American", "South Indian"], accept_new_options=True)
     restricted_foods = st.multiselect("Restricted foods", options=FOOD_RESTRICTIONS, default=["No Red Meat"], accept_new_options=True)
+
+custom_eating_pattern = st.text_area(
+    "Describe your usual eating pattern (optional)",
+    value="",
+    placeholder=(
+        "e.g. I usually eat idli or dosa for breakfast, and rice with curry "
+        "for lunch and dinner."
+    ),
+    help=(
+        "Tell us what you actually eat day-to-day. If you fill this in, it "
+        "replaces the built-in typical eating pattern for each of your "
+        "preferred cuisines above when the meal plan is generated - leave "
+        "it blank to use the standard patterns instead."
+    ),
+)
 
 st.subheader("Foods That Cause or Aggravate Digestive Issues")
 has_digestive_triggers = st.radio(
@@ -357,6 +400,7 @@ if generate:
     else:
         st.session_state["profile"] = profile
         st.session_state["sodium_mg"] = sodium_mg
+        st.session_state["custom_eating_pattern"] = custom_eating_pattern
         st.session_state["has_digestive_triggers"] = has_digestive_triggers == "Yes"
 
 # ---------------------------------------------------------------------------
@@ -452,7 +496,11 @@ if "profile" in st.session_state:
             "A flat JSON representation of this profile, ready to copy or feed into "
             "another system. Click the copy icon in the top-right corner of the code block."
         )
-        export_json = build_export_json(profile, st.session_state.get("sodium_mg", 2300))
+        export_json = build_export_json(
+            profile,
+            st.session_state.get("sodium_mg", 2300),
+            st.session_state.get("custom_eating_pattern", ""),
+        )
         json_str = json.dumps(export_json, indent=4)
         st.code(json_str, language="json")
         st.download_button(
@@ -476,7 +524,11 @@ if "profile" in st.session_state:
     get_recs = st.button("🥦 Get Food Recommendations", type="primary", width='stretch')
 
     if get_recs:
-        api_profile = build_export_json(profile, st.session_state.get("sodium_mg", 2300))
+        api_profile = build_export_json(
+            profile,
+            st.session_state.get("sodium_mg", 2300),
+            st.session_state.get("custom_eating_pattern", ""),
+        )
         try:
             with st.spinner("Contacting food-recommendations service…"):
                 food_recs_response, food_recs_elapsed_s = call_food_recommendations_api(api_profile)
@@ -611,7 +663,11 @@ if "profile" in st.session_state:
                     "Generating your multi-day meal plan with ingredients — this can "
                     "take a minute or two…"
                 ):
-                    api_profile = build_export_json(profile, st.session_state.get("sodium_mg", 2300))
+                    api_profile = build_export_json(
+                        profile,
+                        st.session_state.get("sodium_mg", 2300),
+                        st.session_state.get("custom_eating_pattern", ""),
+                    )
                     meal_plan_response, meal_plan_elapsed_s = call_meal_plan_api(
                         api_profile, selected_food_recommendations, resp_food_rec_id
                     )
@@ -744,4 +800,3 @@ if "profile" in st.session_state:
                 st.json(meal_plan_response)
 else:
     st.info("Fill in the form above and click **Generate Profile** to see your results.")
-    
