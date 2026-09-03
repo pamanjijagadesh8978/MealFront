@@ -27,38 +27,26 @@ st.set_page_config(page_title="Nutrition & Fitness Profile Builder", page_icon="
 DEFAULT_API_BASE_URL = "https://mealback-recommendation-api-523501105526.asia-south1.run.app"
 REQUEST_TIMEOUT_S = 600
 
-with st.sidebar:
-    st.subheader("⚙️ API Settings")
-    api_base_url = st.text_input(
-        "Meal Generation API base URL",
-        value=st.session_state.get("api_base_url", DEFAULT_API_BASE_URL),
-        help="Base URL of the FastAPI service exposing /api/v1/food-recommendations "
-             "and /api/v1/meal-plan-with-ingredients.",
-    ).rstrip("/")
-    st.session_state["api_base_url"] = api_base_url
+# The base URL and API key are no longer exposed in the UI (they were
+# previously editable in a sidebar "API Settings" panel, which meant any
+# front-end user could see/copy the API key and hit arbitrary base URLs).
+# Both are now resolved silently:
+#   - api_base_url always comes from DEFAULT_API_BASE_URL above.
+#   - api_key always comes from Streamlit secrets (MEAL_API_KEY), which is
+#     never rendered to the page. Set it in .streamlit/secrets.toml locally,
+#     or the "Secrets" panel on Streamlit Community Cloud.
+api_base_url = DEFAULT_API_BASE_URL.rstrip("/")
+api_key = st.secrets.get("MEAL_API_KEY", "") if hasattr(st, "secrets") else ""
 
-    # The backend's /api/v1/* endpoints require an X-API-Key header (set via
-    # the API_KEYS env var on the backend - see main.py). Preferred source is
-    # Streamlit secrets (.streamlit/secrets.toml locally, or the "Secrets"
-    # panel on Streamlit Community Cloud) so the key is never hardcoded or
-    # committed to source control. Falls back to a sidebar text input for
-    # quick local testing against a dev backend that has no API_KEYS set.
-    _secrets_api_key = st.secrets.get("MEAL_API_KEY", "") if hasattr(st, "secrets") else ""
-    if _secrets_api_key:
-        st.success("✅ API key loaded from secrets")
-    else:
-        st.warning("❌ No API key found in secrets (MEAL_API_KEY)")
-
-    api_key = st.text_input(
-        "API key (override)",
-        value=st.session_state.get("api_key", _secrets_api_key),
-        type="password",
-        help="Sent as the X-API-Key header on every request. Pre-filled from "
-             "Streamlit secrets (MEAL_API_KEY) when available — only type here "
-             "to override it for this session. Leave blank only if the backend "
-             "has no API_KEYS configured (local dev only).",
+if not api_key:
+    # Only warn — don't block — in case a dev backend has no API_KEYS set.
+    # This message is intentionally generic and doesn't reveal any secret
+    # value, just that one is missing.
+    st.sidebar.warning(
+        "⚠️ No MEAL_API_KEY found in secrets. Requests will be sent without "
+        "an API key, which only works against a backend with no API_KEYS "
+        "configured."
     )
-    st.session_state["api_key"] = api_key
 
 
 def _api_headers() -> dict:
