@@ -37,6 +37,33 @@ with st.sidebar:
     ).rstrip("/")
     st.session_state["api_base_url"] = api_base_url
 
+    # The backend's /api/v1/* endpoints require an X-API-Key header (set via
+    # the API_KEYS env var on the backend - see main.py). Preferred source is
+    # Streamlit secrets (.streamlit/secrets.toml locally, or the "Secrets"
+    # panel on Streamlit Community Cloud) so the key is never hardcoded or
+    # committed to source control. Falls back to a sidebar text input for
+    # quick local testing against a dev backend that has no API_KEYS set.
+    _secrets_api_key = st.secrets.get("MEAL_API_KEY", "") if hasattr(st, "secrets") else ""
+    api_key = st.text_input(
+        "API key",
+        value=st.session_state.get("api_key", _secrets_api_key),
+        type="password",
+        help="Sent as the X-API-Key header on every request. Leave blank only "
+             "if the backend has no API_KEYS configured (local dev only).",
+    )
+    st.session_state["api_key"] = api_key
+
+
+def _api_headers() -> dict:
+    """Headers sent on every request to the meal-generation API. Only
+    includes X-API-Key when a key is actually set, so a blank key against a
+    dev backend with no API_KEYS configured still works (see
+    require_api_key()'s no-op path in main.py)."""
+    headers = {}
+    if api_key:
+        headers["X-API-Key"] = api_key
+    return headers
+
 
 def call_food_recommendations_api(profile: dict) -> tuple[dict, float]:
     """POSTs the profile to /api/v1/food-recommendations and returns a tuple of
@@ -46,9 +73,15 @@ def call_food_recommendations_api(profile: dict) -> tuple[dict, float]:
     resp = requests.post(
         f"{api_base_url}/api/v1/food-recommendations",
         json={"profile": profile},
+        headers=_api_headers(),
         timeout=REQUEST_TIMEOUT_S,
     )
     elapsed = time.perf_counter() - start
+    if resp.status_code == 401:
+        st.error("The API rejected the request: missing or invalid API key. "
+                  "Enter the correct key in the sidebar under **API Settings**.")
+    elif resp.status_code == 429:
+        st.error("Rate limit hit on the meal-generation API. Wait a bit and try again.")
     resp.raise_for_status()
     return resp.json(), elapsed
 
@@ -72,9 +105,15 @@ def call_meal_plan_api(profile: dict, food_recommendations: dict, food_recommend
             "food_recommendations": food_recommendations,
             "food_recommendation_id": food_recommendation_id,
         },
+        headers=_api_headers(),
         timeout=REQUEST_TIMEOUT_S,
     )
     elapsed = time.perf_counter() - start
+    if resp.status_code == 401:
+        st.error("The API rejected the request: missing or invalid API key. "
+                  "Enter the correct key in the sidebar under **API Settings**.")
+    elif resp.status_code == 429:
+        st.error("Rate limit hit on the meal-generation API. Wait a bit and try again.")
     resp.raise_for_status()
     return resp.json(), elapsed
 
@@ -601,7 +640,9 @@ if "profile" in st.session_state:
             cat_tabs = st.tabs([humanize(k) for k in category_keys])
             for tab, category in zip(cat_tabs, category_keys):
                 with tab:
-                    items = food_recommendations[category]
+                    # De-duplicate while preserving order, in case the backend
+                    # returned the same item twice for this category.
+                    items = list(dict.fromkeys(food_recommendations[category]))
                     if not items:
                         st.caption("No items in this category.")
                     else:
@@ -615,7 +656,7 @@ if "profile" in st.session_state:
                             checked = cols[i % n_cols].checkbox(
                                 item,
                                 value=default_checked,
-                                key=f"food_item_{category}_{item}",
+                                key=f"food_item_{category}_{item}_{i}",
                             )
                             cat_selection[item] = checked
 
@@ -704,10 +745,10 @@ if "profile" in st.session_state:
 
             if plan_totals or plan_avg_totals:
                 pt_col1, pt_col2, pt_col3, pt_col4 = st.columns(4)
-                pt_col1.metric("Plan Total Calories", f"{plan_totals.get('calories', 0):.0f}")
-                pt_col2.metric("Plan Total Protein", f"{plan_totals.get('protein', 0):.0f} g")
-                pt_col3.metric("Avg Daily Calories", f"{plan_avg_totals.get('calories', 0):.0f}")
-                pt_col4.metric("Avg Daily Protein", f"{plan_avg_totals.get('protein', 0):.0f} g")
+                pt_col1.metric("Plan Total Calories", f"{plan_totals.get('calories') or 0:.0f}")
+                pt_col2.metric("Plan Total Protein", f"{plan_totals.get('protein') or 0:.0f} g")
+                pt_col3.metric("Avg Daily Calories", f"{plan_avg_totals.get('calories') or 0:.0f}")
+                pt_col4.metric("Avg Daily Protein", f"{plan_avg_totals.get('protein') or 0:.0f} g")
 
             if days:
                 day_labels = [f"Day {d.get('day', i + 1)}" for i, d in enumerate(days)]
@@ -748,13 +789,13 @@ if "profile" in st.session_state:
                                 if meal_totals:
                                     st.markdown("**Meal totals:**")
                                     totals_rows = [
-                                        {"Nutrient": "Calories", "Amount": f"{meal_totals.get('calories', 0):.0f}"},
-                                        {"Nutrient": "Protein (g)", "Amount": f"{meal_totals.get('protein', 0):.1f}"},
-                                        {"Nutrient": "Carbs (g)", "Amount": f"{meal_totals.get('carbs', 0):.1f}"},
-                                        {"Nutrient": "Fat (g)", "Amount": f"{meal_totals.get('fat', 0):.1f}"},
-                                        {"Nutrient": "Fiber (g)", "Amount": f"{meal_totals.get('fiber', 0):.1f}"},
-                                        {"Nutrient": "Sugar (g)", "Amount": f"{meal_totals.get('sugar', 0):.1f}"},
-                                        {"Nutrient": "Sodium (mg)", "Amount": f"{meal_totals.get('sodium', 0):.0f}"},
+                                        {"Nutrient": "Calories", "Amount": f"{meal_totals.get('calories') or 0:.0f}"},
+                                        {"Nutrient": "Protein (g)", "Amount": f"{meal_totals.get('protein') or 0:.1f}"},
+                                        {"Nutrient": "Carbs (g)", "Amount": f"{meal_totals.get('carbs') or 0:.1f}"},
+                                        {"Nutrient": "Fat (g)", "Amount": f"{meal_totals.get('fat') or 0:.1f}"},
+                                        {"Nutrient": "Fiber (g)", "Amount": f"{meal_totals.get('fiber') or 0:.1f}"},
+                                        {"Nutrient": "Sugar (g)", "Amount": f"{meal_totals.get('sugar') or 0:.1f}"},
+                                        {"Nutrient": "Sodium (mg)", "Amount": f"{meal_totals.get('sodium') or 0:.0f}"},
                                     ]
                                     st.dataframe(totals_rows, width='stretch', hide_index=True)
 
@@ -769,13 +810,13 @@ if "profile" in st.session_state:
                                             "Selected Ingrediant": ing.get("selected_food_name", ""),
                                             "LLM Generated": ing.get("source") == "llm_generated",
                                             "Quantity": ing.get("quantity", ""),
-                                            "Calories": f"{macros.get('calories', 0):.0f}" if macros else "",
-                                            "Protein (g)": f"{macros.get('protein', 0):.1f}" if macros else "",
-                                            "Carbs (g)": f"{macros.get('carbs', 0):.1f}" if macros else "",
-                                            "Fat (g)": f"{macros.get('fat', 0):.1f}" if macros else "",
-                                            "Fiber (g)": f"{macros.get('fiber', 0):.1f}" if macros else "",
-                                            "Sugar (g)": f"{macros.get('sugar', 0):.1f}" if macros else "",
-                                            "Sodium (mg)": f"{macros.get('sodium', 0):.0f}" if macros else "",
+                                            "Calories": f"{macros.get('calories') or 0:.0f}" if macros else "",
+                                            "Protein (g)": f"{macros.get('protein') or 0:.1f}" if macros else "",
+                                            "Carbs (g)": f"{macros.get('carbs') or 0:.1f}" if macros else "",
+                                            "Fat (g)": f"{macros.get('fat') or 0:.1f}" if macros else "",
+                                            "Fiber (g)": f"{macros.get('fiber') or 0:.1f}" if macros else "",
+                                            "Sugar (g)": f"{macros.get('sugar') or 0:.1f}" if macros else "",
+                                            "Sodium (mg)": f"{macros.get('sodium') or 0:.0f}" if macros else "",
                                         })
                                     st.dataframe(ing_rows, width='stretch', hide_index=True)
 
