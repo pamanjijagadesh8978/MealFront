@@ -44,12 +44,19 @@ with st.sidebar:
     # committed to source control. Falls back to a sidebar text input for
     # quick local testing against a dev backend that has no API_KEYS set.
     _secrets_api_key = st.secrets.get("MEAL_API_KEY", "") if hasattr(st, "secrets") else ""
+    if _secrets_api_key:
+        st.success("✅ API key loaded from secrets")
+    else:
+        st.warning("❌ No API key found in secrets (MEAL_API_KEY)")
+
     api_key = st.text_input(
-        "API key",
+        "API key (override)",
         value=st.session_state.get("api_key", _secrets_api_key),
         type="password",
-        help="Sent as the X-API-Key header on every request. Leave blank only "
-             "if the backend has no API_KEYS configured (local dev only).",
+        help="Sent as the X-API-Key header on every request. Pre-filled from "
+             "Streamlit secrets (MEAL_API_KEY) when available — only type here "
+             "to override it for this session. Leave blank only if the backend "
+             "has no API_KEYS configured (local dev only).",
     )
     st.session_state["api_key"] = api_key
 
